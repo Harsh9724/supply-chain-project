@@ -3,82 +3,86 @@ pragma solidity ^0.8.0;
 
 contract SupplyChain {
     struct Product {
-        int256 id;
-        string productName;
-        int256 price;
-        int256 quantity;
-        address producerAddress;
+        uint id;
+        string name;
+        uint price;
+        uint quantity;
+        address seller;
     }
 
     struct Order {
-        int256 id;
-        int256 productId;
-        int256 quantity;
-        string customerName;
-        string status;
+        uint id;
+        uint productId;
+        uint quantity;
+        address buyer;
         string deliveryAddress;
-        address customerAddress;
     }
 
-    mapping(int256 => Product) public products;
-    mapping(int256 => Order) public orders;
-    mapping(address => string) public producers;
-    int256 public totalProduct;
-    int256 public totalOrder;
+    uint public productCount = 0;
+    uint public orderCount = 0;
 
-    event ProductAdded(int256 indexed productId, string productName, int256 price, int256 quantity);
-    event OrderPlaced(int256 indexed orderId, int256 productId, int256 quantity, string customerName, string status);
+    mapping(uint => Product) public products;
+    mapping(uint => Order) public orders;
 
-    // Add a product by a producer
-    function addProduct(string memory _pname, int256 _price, int256 _quantity) public {
-        totalProduct++;
-        products[totalProduct] = Product(totalProduct, _pname, _price, _quantity, msg.sender);
-        emit ProductAdded(totalProduct, _pname, _price, _quantity);
+    event ProductAdded(uint productId, string name, uint price, uint quantity, address seller);
+    event OrderPlaced(uint orderId, uint productId, uint quantity, address buyer, string deliveryAddress);
+
+    modifier onlySeller(uint productId) {
+        require(products[productId].seller == msg.sender, "Only the seller can modify this product");
+        _;
     }
 
-    // Register a producer
-    function registerProducer(string memory _name) public {
-        producers[msg.sender] = _name;
+    // Function to add a new product to the supply chain
+    function addProduct(string memory name, uint price, uint quantity) public {
+        require(price > 0, "Price must be greater than zero");
+        require(quantity > 0, "Quantity must be greater than zero");
+
+        productCount++;
+        products[productCount] = Product(productCount, name, price, quantity, msg.sender);
+
+        emit ProductAdded(productCount, name, price, quantity, msg.sender);
     }
 
-    // Place an order
-    function placeOrder(string memory _cname, string memory _daddress, int256 _pid, int256 _quantity) public {
-        require(products[_pid].quantity >= _quantity, "Insufficient product quantity");
-        totalOrder++;
-        orders[totalOrder] = Order(totalOrder, _pid, _quantity, _cname, "Placed", _daddress, msg.sender);
-        products[_pid].quantity -= _quantity;
-        emit OrderPlaced(totalOrder, _pid, _quantity, _cname, "Placed");
+    // Function to update an existing product (e.g., after a sale)
+    function updateProduct(uint productId, uint price, uint quantity) public onlySeller(productId) {
+        require(price > 0, "Price must be greater than zero");
+        require(quantity >= 0, "Quantity must be non-negative");
+
+        products[productId].price = price;
+        products[productId].quantity = quantity;
+
+        emit ProductAdded(productId, products[productId].name, price, quantity, msg.sender);
     }
 
-    // Check if an address is registered
-   function isRegistered(address _addr) public view returns (bool) {
-    return bytes(producers[_addr]).length > 0;
-}
+    // Function for a buyer to place an order
+    function placeOrder(uint productId, uint quantity, string memory deliveryAddress) public {
+        require(products[productId].id != 0, "Product does not exist");
+        require(products[productId].quantity >= quantity, "Insufficient product quantity");
 
+        products[productId].quantity -= quantity;
 
-    // Get product details by ID
-    function getProductById(int256 _pid) public view returns (Product memory) {
-        return products[_pid];
+        orderCount++;
+        orders[orderCount] = Order(orderCount, productId, quantity, msg.sender, deliveryAddress);
+
+        emit OrderPlaced(orderCount, productId, quantity, msg.sender, deliveryAddress);
     }
 
-    // Get total products
-    function getTotalProduct() public view returns (int256) {
-        return totalProduct;
+    // Function to fetch a single product by its ID
+    function getProduct(uint productId) public view returns (Product memory) {
+        return products[productId];
     }
 
-    // Get total orders for a specific address
-    function getTotalOrder(address _addr) public view returns (int256) {
-        int256 count = 0;
-        for (int256 i = 1; i <= totalOrder; i++) {
-            if (orders[i].customerAddress == _addr) {
-                count++;
-            }
+    // Function to fetch a single order by its ID
+    function getOrder(uint orderId) public view returns (Order memory) {
+        return orders[orderId];
+    }
+
+    // Function to fetch all products (will be useful for the frontend)
+    function getAllProducts() public view returns (Product[] memory) {
+        Product[] memory allProducts = new Product[](productCount);
+        for (uint i = 1; i <= productCount; i++) {
+            allProducts[i - 1] = products[i];
         }
-        return count;
-    }
-
-    // Get order by ID
-    function getOrderById(int256 _oid) public view returns (Order memory) {
-        return orders[_oid];
+        return allProducts;
     }
 }

@@ -1,174 +1,283 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import axios from "axios";
+import { ethers } from "ethers";
+import { Web3Provider } from "@ethersproject/providers";
 
-const Buyer = () => {
+// Assuming you have a contract object initialized with the ABI and address
+import { contract } from "../lib/ethers";
+
+export default function Buyer() {
   const [products, setProducts] = useState([]);
-  const [orderDetails, setOrderDetails] = useState({
-    pid: "",
-    quantity: "",
-    cname: "",
-    caddress: "",
-  });
-  const [loading, setLoading] = useState(true);
+  const [selectedProductId, setSelectedProductId] = useState(null);
+  const [quantity, setQuantity] = useState(0);
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [orders, setOrders] = useState([]);
+  const [provider, setProvider] = useState(null);
+  const [signer, setSigner] = useState(null);
+  const [walletConnected, setWalletConnected] = useState(false);
 
-  useEffect(() => {
-    fetchProducts();
-  }, []);
+  // Connect wallet function
+  const connectWallet = async () => {
+    if (window.ethereum) {
+      try {
+        // Request MetaMask account access
+        await window.ethereum.request({ method: "eth_requestAccounts" });
 
-  const fetchProducts = async () => {
-    try {
-      const { data: totalProduct } = await axios.get("/api/get-total-product");
-      const productList = [];
+        // Set up Web3Provider and signer
+        const ethProvider = new Web3Provider(window.ethereum);
+        const ethSigner = ethProvider.getSigner();
 
-      for (let i = 1; i <= totalProduct; i++) {
-        const { data: product } = await axios.post("/api/get-product-by-id", {
-          pid: i,
-        });
-        productList.push(product);
+        setProvider(ethProvider);
+        setSigner(ethSigner);
+
+        // Log the connected wallet address
+        const address = await ethSigner.getAddress();
+        console.log("Wallet connected:", address);
+        setWalletConnected(true); // Mark the wallet as connected
+      } catch (err) {
+        console.error("Error connecting to wallet:", err);
+        alert("Please connect your wallet.");
       }
-
-      setProducts(productList);
-      setLoading(false);
-    } catch (error) {
-      console.error("Error fetching products:", error);
+    } else {
+      alert("Please install MetaMask!");
     }
   };
 
-const handleOrder = async () => {
-  const { pid, quantity, cname, caddress } = orderDetails;
+  // Fetch products from the contract
+  const fetchProducts = async () => {
+    try {
+      const totalProducts = await contract.productCount();
+      console.log("Total products:", totalProducts);
 
-  try {
-    const [account] = await window.ethereum.request({
-      method: "eth_requestAccounts",
-    });
-
-    const response = await axios.post("/api/place-order", {
-      pid: Number(pid),
-      quantity: Number(quantity),
-      cname,
-      daddress: caddress,
-      account, // Correctly send the account address from MetaMask
-    });
-
-    if (response.status === 200) {
-      alert("Order placed successfully!");
-      fetchProducts(); // Refresh products dynamically
-      setOrderDetails({ pid: "", quantity: "", cname: "", caddress: "" });
-    } else {
-      console.error("Error placing order:", response.data.error);
+      const productsList = [];
+      for (let i = 1; i <= totalProducts; i++) {
+        const product = await contract.getProduct(i);
+        productsList.push(product);
+      }
+      setProducts(productsList);
+    } catch (err) {
+      console.error("Error fetching products:", err);
     }
-  } catch (error) {
-    console.error("Error placing order:", error);
-  }
-};
+  };
 
+  // Fetch orders placed by the buyer
+  const fetchOrders = async () => {
+    if (!signer) {
+      alert("Please connect your wallet first.");
+      return;
+    }
+
+    try {
+      const contractWithSigner = contract.connect(signer);
+
+      // Fetch total number of orders
+      const totalOrders = await contract.orderCount();
+      const ordersList = [];
+
+      // Loop through all orders and fetch them
+      for (let i = 1; i <= totalOrders; i++) {
+        const order = await contract.orders(i);
+        ordersList.push(order);
+      }
+
+      setOrders(ordersList);
+    } catch (err) {
+      console.error("Error fetching orders:", err);
+    }
+  };
+
+  // Place an order for the selected product
+  const placeOrder = async () => {
+    if (!signer) {
+      alert("Please connect your wallet first.");
+      return;
+    }
+
+    if (!selectedProductId || quantity <= 0 || !deliveryAddress) {
+      alert("Please fill in all the fields correctly.");
+      return;
+    }
+
+    try {
+      const contractWithSigner = contract.connect(signer);
+
+      // Call placeOrder function from contract
+      const transaction = await contractWithSigner.placeOrder(
+        selectedProductId,
+        quantity,
+        deliveryAddress
+      );
+      console.log("Order placed:", transaction);
+
+      // After placing the order, reset the fields
+      setQuantity(0);
+      setDeliveryAddress("");
+      setSelectedProductId(null);
+
+      // Fetch orders again to show the newly placed order
+      fetchOrders();
+    } catch (err) {
+      console.error("Error placing order:", err);
+    }
+  };
+
+  // Check if wallet is connected when the component mounts
+  useEffect(() => {
+    const checkWalletConnection = async () => {
+      if (window.ethereum) {
+        const ethProvider = new Web3Provider(window.ethereum);
+        const ethSigner = ethProvider.getSigner();
+
+        try {
+          // Try to get the current address to check if wallet is connected
+          const address = await ethSigner.getAddress();
+          console.log("Wallet already connected:", address);
+          setProvider(ethProvider);
+          setSigner(ethSigner);
+          setWalletConnected(true); // Mark the wallet as connected
+        } catch (err) {
+          console.error("No wallet connected:", err);
+          setWalletConnected(false); // No wallet connected
+        }
+      } else {
+        alert("Please install MetaMask!");
+      }
+    };
+
+    // Run wallet connection check when the component mounts
+    checkWalletConnection();
+  }, []);
+
+  // Fetch products and orders after the wallet is connected
+  useEffect(() => {
+    if (walletConnected) {
+      fetchProducts();
+      fetchOrders();
+    }
+  }, [walletConnected]);
 
   return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold mb-6">Buyer Dashboard</h1>
-      {loading ? (
-        <p>Loading products...</p>
-      ) : (
-        <>
-          <table className="w-full text-left table-auto border-collapse border border-gray-300 mb-6">
-            <thead>
-              <tr className="bg-gray-200">
-                <th className="border border-gray-300 px-4 py-2">ID</th>
-                <th className="border border-gray-300 px-4 py-2">Name</th>
-                <th className="border border-gray-300 px-4 py-2">Price</th>
-                <th className="border border-gray-300 px-4 py-2">Quantity</th>
-                <th className="border border-gray-300 px-4 py-2">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {products.length > 0 ? (
-                products.map((product, index) => (
-                  <tr key={index}>
-                    <td className="border border-gray-300 px-4 py-2">
-                      {product.id}
-                    </td>
-                    <td className="border border-gray-300 px-4 py-2">
-                      {product.productName}
-                    </td>
-                    <td className="border border-gray-300 px-4 py-2">
-                      {product.price}
-                    </td>
-                    <td className="border border-gray-300 px-4 py-2">
-                      {product.quantity}
-                    </td>
-                    <td className="border border-gray-300 px-4 py-2">
+    <div className="min-h-screen bg-gray-100 p-10 flex flex-col items-center">
+      <div className="w-full max-w-6xl bg-white p-8 rounded-lg shadow-lg flex">
+        {/* Left Side - Product List */}
+        <div className="w-1/2 pr-4">
+          <h2 className="text-3xl font-bold text-center text-gray-800 mb-6">
+            Available Products
+          </h2>
+          {products.length > 0 ? (
+            <table className="min-w-full table-auto">
+              <thead>
+                <tr>
+                  <th className="px-4 py-2 text-left">Product Name</th>
+                  <th className="px-4 py-2 text-left">Price</th>
+                  <th className="px-4 py-2 text-left">Quantity</th>
+                  <th className="px-4 py-2 text-left">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {products.map((product, index) => (
+                  <tr
+                    key={index}
+                    className="border-t">
+                    <td className="px-4 py-2">{product.name}</td>
+                    <td className="px-4 py-2">₹{product.price}</td>
+                    <td className="px-4 py-2">{product.quantity}</td>
+                    <td className="px-4 py-2">
                       <button
-                        className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-700"
-                        onClick={() =>
-                          setOrderDetails({ ...orderDetails, pid: product.id })
-                        }>
-                        Order
+                        onClick={() => setSelectedProductId(product.id)}
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition duration-300">
+                        Select Product
                       </button>
                     </td>
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <td
-                    className="border border-gray-300 px-4 py-2 text-center"
-                    colSpan="5">
-                    No products available
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-          <div className="bg-gray-100 p-6 rounded-lg">
-            <h2 className="text-xl font-bold mb-4">Place an Order</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <input
-                type="number"
-                placeholder="Product ID"
-                value={orderDetails.pid}
-                onChange={(e) =>
-                  setOrderDetails({ ...orderDetails, pid: e.target.value })
-                }
-                className="p-2 border border-gray-300 rounded"
-              />
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="text-gray-500">No products available.</p>
+          )}
+        </div>
+
+        {/* Right Side - Order Form */}
+        <div className="w-1/2 pl-4">
+          <h2 className="text-3xl font-bold text-center text-gray-800 mb-6">
+            Place Your Order
+          </h2>
+
+          {selectedProductId && (
+            <div className="space-y-4">
+              <select
+                value={selectedProductId}
+                onChange={(e) => setSelectedProductId(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option
+                  value=""
+                  disabled>
+                  Select Product
+                </option>
+                {products.map((product) => (
+                  <option
+                    key={product.id}
+                    value={product.id}>
+                    {product.name} - ₹{product.price}
+                  </option>
+                ))}
+              </select>
+
               <input
                 type="number"
                 placeholder="Quantity"
-                value={orderDetails.quantity}
-                onChange={(e) =>
-                  setOrderDetails({ ...orderDetails, quantity: e.target.value })
-                }
-                className="p-2 border border-gray-300 rounded"
-              />
-              <input
-                type="text"
-                placeholder="Customer Name"
-                value={orderDetails.cname}
-                onChange={(e) =>
-                  setOrderDetails({ ...orderDetails, cname: e.target.value })
-                }
-                className="p-2 border border-gray-300 rounded"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <input
                 type="text"
                 placeholder="Delivery Address"
-                value={orderDetails.caddress}
-                onChange={(e) =>
-                  setOrderDetails({ ...orderDetails, caddress: e.target.value })
-                }
-                className="p-2 border border-gray-300 rounded"
+                value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+              <button
+                onClick={placeOrder}
+                className="w-full bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition duration-300">
+                Place Order
+              </button>
             </div>
-            <button
-              className="mt-4 bg-green-500 text-white px-6 py-2 rounded hover:bg-green-700"
-              onClick={handleOrder}>
-              Submit Order
-            </button>
-          </div>
-        </>
-      )}
+          )}
+        </div>
+      </div>
+
+      {/* Orders */}
+      <div className="mt-8">
+        <h3 className="text-xl font-semibold text-gray-800 mb-4">Orders</h3>
+        {orders.length > 0 ? (
+          <table className="min-w-full table-auto border-collapse">
+            <thead>
+              <tr>
+                <th className="px-4 py-2 border">Order ID</th>
+                <th className="px-4 py-2 border">Buyer</th>
+                <th className="px-4 py-2 border">Product ID</th>
+                <th className="px-4 py-2 border">Quantity</th>
+                <th className="px-4 py-2 border">Total Price (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((order, index) => (
+                <tr key={index}>
+                  <td className="px-4 py-2 border">{order.id}</td>
+                  <td className="px-4 py-2 border">{order.buyer}</td>
+                  <td className="px-4 py-2 border">{order.productId}</td>
+                  <td className="px-4 py-2 border">{order.quantity}</td>
+                  <td className="px-4 py-2 border">{order.totalPrice}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-gray-500">No orders yet.</p>
+        )}
+      </div>
     </div>
   );
-};
-
-export default Buyer;
+}
